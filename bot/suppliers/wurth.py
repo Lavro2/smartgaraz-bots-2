@@ -7,7 +7,7 @@ Licencia / Jidoka: ``bot/data/CATALOG_LICENSING.md`` § Würth.
 DEFAULT = VEREJNÝ režim (bez loginu):
   - crawl anonymného HTML katalógu (.sku linky) — len discovery SKU
   - B2B cena/sklad: zapni `WURTH_B2B=1` + `WURTH_USER` / `WURTH_PASSWORD`
-  - Akamai: HttpClient(impersonate=safari17_0) cez curl_cffi (inak Challenge Validation)
+  - Akamai: pri Challenge Validation bot skončí (žiadne obchádzanie ochrany)
   - Fotky z witglobal CDN: default OFF; zapni len `WURTH_MEDIA_OK=1`
     (písomný/B2B súhlas na rehost Würth médií)
 
@@ -165,13 +165,7 @@ def _b2b_enabled() -> bool:
     return os.getenv("WURTH_B2B", "").strip().lower() in ("1", "true", "yes", "on")
 
 
-# Akamai Bot Manager: plain requests / Chrome TLS → "Challenge Validation" (no loginForm).
-# Safari TLS via curl_cffi bypasses it (verified 2026-10-15). Chrome impersonate still gets soft CPT.
-WURTH_IMPERSONATE_CHAIN = (
-    "safari17_0",
-    "safari15_5",
-    "safari15_3",
-)
+# Akamai Bot Manager: pri challenge stránke bot končí — žiadne obchádzanie.
 
 
 def is_akamai_challenge(html: str) -> bool:
@@ -204,10 +198,11 @@ class WurthSupplier(LoginMixin, GenericSupplier):
         raw_login = (creds.get("login_url") or "").strip()
         if (not raw_login) or raw_login.rstrip("/").endswith("eshop.wurth.sk") or "/login" not in raw_login:
             creds["login_url"] = DEFAULT_LOGIN
-        # Vlastný klient s pokojným tempom (bez impersonate / obchádzania ochrany).
+        # Vlastný klient s pokojným tempom (bez obchádzania ochrany).
         http = _wurth_http(delay=getattr(http, "delay", None) if http is not None else None)
         super().__init__(base_url=self.base_url, http=http, credentials=creds, source_name="wurth")
         self._logged_in = False
+        self._blocked = False
         self._sku_url_cache: Dict[str, str] = {}
 
     # ------------------------------------------------------------------ login
@@ -215,7 +210,10 @@ class WurthSupplier(LoginMixin, GenericSupplier):
     def _get_login_page(self, login_url: str):
         """Jeden GET login stránky. Pri challenge/403 žiadne obchádzanie — len pauza a 1 opakovanie."""
         page = None
-        for pause in (0, 300):
+        # WURTH_CHALLENGE_PAUSE=0 → pri ochrane webu žiadne čakanie ani opakovanie (rýchly skip).
+        retry = int(os.getenv("WURTH_CHALLENGE_PAUSE", "300") or 0)
+        self._blocked = False
+        for pause in ((0, retry) if retry > 0 else (0,)):
             if pause:
                 LOGGER.warning("Würth: ochrana webu (challenge/403) — pauza %ss", pause)
                 time.sleep(pause)
@@ -226,7 +224,19 @@ class WurthSupplier(LoginMixin, GenericSupplier):
                 continue
             if has_wurth_login_form(page.text) and not is_akamai_challenge(page.text):
                 return page
+        if page is not None and (page.status_code in (403, 429) or is_akamai_challenge(page.text)):
+            self._blocked = True
         return page
+
+    def probe_blocked(self) -> bool:
+        """Jeden bežný GET verejnej stránky (bez obchádzania). True = web vracia challenge/403."""
+        try:
+            r = self.http.get(f"{BASE}/")
+        except Exception:
+            return False
+        blocked = r.status_code in (403, 429) or is_akamai_challenge(r.text or "")
+        self._blocked = blocked
+        return blocked
 
     def ensure_login(self) -> bool:
         if getattr(self, "_logged_in", False):
@@ -320,7 +330,7 @@ class WurthSupplier(LoginMixin, GenericSupplier):
                 and "loginwithusernameform.password" not in body
                 and "/login" not in final
             )
-            # cookie WU_AUTHENTICATED je spoľahlivý signál (requests + curl_cffi jars)
+            # cookie WU_AUTHENTICATED je spoľahlivý signál (requests jar)
             cookies = session_cookie_names(self.http.session)
             if "WU_AUTHENTICATED" in cookies or any(
                 "AuthenticationStateToken" in n for n in cookies
@@ -402,6 +412,10 @@ class WurthSupplier(LoginMixin, GenericSupplier):
             if resp.status_code in (403, 429) or is_akamai_challenge(html):
                 blocks = getattr(self, "_blocks", 0) + 1
                 self._blocks = blocks
+                if os.getenv("SG_WURTH_FAST_FAIL") == "1" and not getattr(self, "_ok_pages", 0):
+                    self._blocked = True
+                    LOGGER.warning("Würth: ochrana webu hneď na začiatku — crawl končím bez čakania (SG_WURTH_FAST_FAIL)")
+                    break
                 if blocks > 3:
                     LOGGER.warning("Würth: opakovaná ochrana webu — crawl končím (pokračuje ďalší beh)")
                     break
@@ -411,6 +425,7 @@ class WurthSupplier(LoginMixin, GenericSupplier):
                 queue.insert(0, page_url)
                 continue
 
+            self._ok_pages = getattr(self, "_ok_pages", 0) + 1
             for url in extract_sku_urls(html, page_url):
                 found.add(url)
                 if limit and len(found) >= limit:
