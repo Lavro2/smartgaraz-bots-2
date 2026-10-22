@@ -1,0 +1,45 @@
+name: Supplier schedule (ideo + Pro-Tec)
+# Repo B vlastní ideo a Pro-Tec. Noc: full import (len koncepty, skip existujúce SKU).
+# Deň: ceny + sklad existujúcich produktov. HQ load guard (shop_guard) platí.
+on:
+  schedule:
+    - cron: "30 0 * * *"        # 02:30 SK (leto) — full
+    - cron: "15 6,10,14 * * 1-6" # 08:15 / 12:15 / 16:15 SK — ceny + sklad
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "full | prices"
+        required: false
+        default: "prices"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    concurrency:
+      group: supplier-import-${{ matrix.supplier }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        supplier: [ideo, pro-tec]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: bot/requirements.txt
+      - run: pip install -r bot/requirements.txt
+      - name: Import
+        env:
+          WC_URL: ${{ secrets.WC_URL }}
+          WC_CONSUMER_KEY: ${{ secrets.WC_CONSUMER_KEY }}
+          WC_CONSUMER_SECRET: ${{ secrets.WC_CONSUMER_SECRET }}
+          HQ_SYNC_TOKEN: ${{ secrets.HQ_SYNC_TOKEN }}
+          IDEO_USER: ${{ secrets.IDEO_USER }}
+          IDEO_PASSWORD: ${{ secrets.IDEO_PASSWORD }}
+          IMPORT_IN_STOCK: "1"
+          SG_IMPORT_BUDGET_S: "12600"
+          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '30 0 * * *' && 'full' || 'prices') }}
+        run: python bot/supplier_import.py --supplier "${{ matrix.supplier }}" --mode "$MODE" --limit 0
