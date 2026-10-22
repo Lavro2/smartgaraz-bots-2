@@ -29,6 +29,7 @@ import os
 import re
 import sys
 import time
+import zlib
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -197,6 +198,15 @@ def classify_existing(p: Dict[str, Any], m: Dict[str, Any]) -> Optional[Dict[str
         qty = _f(m.get("_supplier_stock"))
     text = str(m.get("_delivery_text") or "")
     if src == "lkq":
+        # Nedostupné, ktoré sme dali my (stock/qty sme pritom vynulovali) — drž, kým
+        # import nedonesie novší údaj od LKQ (_last_b2b_sync po poslednej klasifikácii).
+        fresher = str(m.get("_last_b2b_sync") or "")[:16] > str(m.get("_sg_avail_checked") or "")[:16]
+        if m.get("_sg_avail") == "na" and m.get("_sg_avail_oos") == "1" and not fresher:
+            return {"avail": "na", "src": str(m.get("_sg_avail_src") or "LKQ: nedostupné")}
+        # Oprava behu 22.10. (39826277965): nedostupné omylom → unknown s prázdnym _sg_avail_oos
+        if (m.get("_sg_avail") == "unknown" and "_sg_avail_oos" in m and m.get("_sg_avail_oos") == ""
+                and not fresher and qty in (None, 0)):
+            return _result("na", f"LKQ: 0 ks, {text or 'bez dodacej lehoty'}")
         if p.get("stock_status") == "outofstock" and qty in (None, 0) and m.get("_sg_avail_oos") != "1":
             return classify_lkq_item({"StorageStockAmount": 0, "Disponibility": {"Text": text}})
         return classify_lkq_item({"StorageStockAmount": qty, "Disponibility": {"Text": text}})
@@ -224,8 +234,31 @@ def _szekop_refetch(url: str, http) -> Optional[Dict[str, str]]:
     return classify_szekop(ba, dist, text)
 
 
+def account_split() -> Tuple[int, int]:
+    """(index, count) z SG_ACCOUNT_INDEX / SG_ACCOUNT_COUNT (2. repo na Lavro2); default (0, 1)."""
+    try:
+        n = int(os.environ.get("SG_ACCOUNT_COUNT") or 1)
+        i = int(os.environ.get("SG_ACCOUNT_INDEX") or 0)
+    except ValueError:
+        return 0, 1
+    if n < 1 or not 0 <= i < n:
+        return 0, 1
+    return i, n
+
+
+def mine(p: Dict[str, Any], idx: int, n: int) -> bool:
+    """crc32(SKU) % SG_ACCOUNT_COUNT == SG_ACCOUNT_INDEX (bez SKU → ID), rovnako ako catalog_shard.shard_of."""
+    if n <= 1:
+        return True
+    key = str(p.get("sku") or "").strip() or str(p.get("id"))
+    return zlib.crc32(key.encode("utf-8")) % n == idx
+
+
 def backfill(args) -> int:
     from repair_wurth_products import req  # WC REST + shop_guard (HQ load guard)
+    acc_i, acc_n = account_split()
+    if acc_n > 1:
+        LOG.info("Účet %d/%d: spracúvam len crc32(SKU) %% %d == %d", acc_i, acc_n, acc_n, acc_i)
     counts: Dict[str, Counter] = defaultdict(Counter)
     examples: Dict[str, Dict[str, str]] = defaultdict(dict)
     pending: List[Dict[str, Any]] = []
@@ -260,14 +293,15 @@ def backfill(args) -> int:
         rows = r.json()
         if not rows:
             break
-        from account_split import filter_products as _acct_filter
-        rows = _acct_filter(rows)
         for p in rows:
+            if not mine(p, acc_i, acc_n):
+                continue
             m = meta_of(p)
             sup = str(m.get("_supplier_source") or m.get("_sg_supplier") or "?").lower()
             sup = "wurth" if sup.startswith("wurth") or sup.startswith("würth") else sup
             av = classify_existing(p, m)
             if (av and av["avail"] == "unknown" and sup == "szekop" and szekop_http is not None
+                    and (p.get("status") == "publish" or args.refetch_drafts)
                     and refetched < args.szekop_refetch and "nextis.cz" in str(m.get("supplier_url") or "")
                     and re.search(r"/\d{5,}/?$", str(m.get("supplier_url") or ""))):
                 refetched += 1
@@ -300,7 +334,7 @@ def backfill(args) -> int:
             break
         page += 1
     flush()
-    report = {"changed": changed, "szekop_refetched": refetched,
+    report = {"account": f"{acc_i}/{acc_n}", "changed": changed, "szekop_refetched": refetched,
               "counts": {k: dict(v) for k, v in counts.items()}, "examples": examples, "dry_run": args.dry_run}
     print("REPORT " + json.dumps(report, ensure_ascii=False))
     summ = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -325,6 +359,7 @@ def main() -> int:
     b.add_argument("--sleep", type=float, default=2.0)
     b.add_argument("--szekop-refetch", type=int, default=0, help="max. Szekop PDP na overenie BA/distribučný")
     b.add_argument("--szekop-delay", type=float, default=1.5)
+    b.add_argument("--refetch-drafts", action="store_true", help="Szekop refetch aj pre koncepty (default len publikované)")
     a = ap.parse_args()
     if a.cmd == "backfill":
         return backfill(a)
