@@ -1,5 +1,7 @@
 name: Repair ideo products (názov / kategória)
 on:
+  schedule:
+    - cron: "30 3 * * *"   # 05:30 SK — po nočnom ideo full importe
   workflow_dispatch:
     inputs:
       dry_run:
