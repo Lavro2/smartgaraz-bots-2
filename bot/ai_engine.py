@@ -1694,6 +1694,9 @@ class HDImageFinder:
         bezpečný fallback — obrázok sa vždy priradí, nanajvýš neorezaný."""
         if not url:
             return None
+        # TSS (Cloudflare) blokuje GitHub runnery → nesťahuj, fotku si stiahne WooCommerce (hosting) sám.
+        if "tssgroup." in (url or "").lower():
+            return url
         if Image is None:
             LOGGER.warning("Pillow nie je nainštalovaný, preskakujem orez fotky na štvorec.")
             return url

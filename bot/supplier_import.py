@@ -202,8 +202,8 @@ def new_ids(max_id_before: int) -> list:
 
 
 KNOWN_SOURCES = {"lkq", "wurth", "szekop", "pro-tec", "jlm", "metabond", "ideo", "tss"}
-# Len koncepty — bez auto-publish (Samuel schvaľuje ručne v HQ).
-NO_PUBLISH = {"tss"}
+# Bez auto-publish (len koncepty). TSS: publikuje sa, čo prejde QA (kategória, cena, foto, SK názov).
+NO_PUBLISH: set = set()
 # Presne 1 login na beh: kontrolný login robí až samotný krok (TSS), nie aj tento wrapper.
 SINGLE_LOGIN = {"tss"}
 
@@ -367,7 +367,7 @@ def main() -> int:
                    "--cheap", "--force-daytime", "--skip-existing", "--sleep", "0.1"]
             if base_url:
                 cmd += ["--base-url", base_url]
-        repeat = slug == "lkq" or (slug == "szekop" and not shard)
+        repeat = slug == "lkq" or (slug == "szekop" and not shard) or slug == "tss"
         idle = 0
         while True:
             rounds += 1

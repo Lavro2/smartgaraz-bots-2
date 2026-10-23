@@ -3,8 +3,9 @@
 """TSS Group a.s. (tssgroup.sk, Žilina) — autopríslušenstvo: KEETEC/Pandora alarmy, parkovacie
 senzory a kamery, autokamery, autofólie (KEETECFOL), PPF, detailing (Nasiol)…
 
-Dealer login (TSS_USER / TSS_PASSWORD, formulár /prihlasenie, Buxus CMS). Ceny vidí len
-prihlásený partner. Náklad = cena s DPH (nie sme platcovia), predaj = +30 %, nahor na ,90
+Zdroj dát: HQ (hq.smartgaraz.sk/api/sync/tss-catalog). TSS (Cloudflare) blokuje GitHub runnery,
+preto cenníky (XLSX z Moje TSS) + sklad a dealer ceny z kategórií sťahuje hosting (HQ lib/tss.php,
+1 login na beh, ≥1,6 s medzi požiadavkami). Tento bot na tssgroup.sk nepristupuje vôbec. Náklad = cena s DPH (nie sme platcovia), predaj = +30 %, nahor na ,90
 (pricing.calculate_retail_ideo — rovnaké pravidlo). Bez ceny → produkt sa neimportuje.
 Sklad: „Skladom“ → SR 2–3 prac. dni; „Na ceste“/„Na objednávku“ → EÚ 5–10 (onbackorder);
 „Vypredané“/„Nedostupné“ → nedá sa objednať. Kategórie: len explicitná mapa podľa
@@ -20,7 +21,6 @@ import re
 from typing import Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
 
 from .base import BaseSupplier, ProductRaw
 
@@ -96,84 +96,53 @@ def sku_of(code: str, pid: str) -> str:
     return f"TSS-{c}" if c else f"TSS-ID{pid}"
 
 
+BRANDS = {"keetec": "Keetec", "keetecfol": "KeetecFOL", "pandora": "Pandora", "nasiol": "Nasiol", "bene": "BENE",
+          "protector": "Protector", "steelmate": "Steelmate", "neoline": "Neoline", "orwell": "Orwell", "gswf": "GSWF",
+          "zabat": "Zabat", "evoxys": "Evoxys", "camplus": "Camplus", "sd3": "SD3", "awex": "Awex", "kemo": "Kemo",
+          "onlite": "Onlite", "bury": "Bury", "forteza": "Forteza", "audac": "Audac", "marstek": "Marstek", "alcosense": "AlcoSense"}
+HQ_URL = os.getenv("HQ_URL", "https://hq.smartgaraz.sk").rstrip("/")
+
+
+def full_image(url: str) -> str:
+    """Náhľad z výpisu → pôvodná fotka (bez cache/pagespeed)."""
+    u = re.sub(r"/buxus/images/cache/[^/]+/", "/buxus/images/", url or "")
+    return re.sub(r"\.pagespeed\.[^/]*$", "", u)
+
+
 class TssSupplier(BaseSupplier):
     name = "tss"
 
     def __init__(self, http=None, credentials=None):
         super().__init__(http=http, credentials=credentials or {})
-        self.http.delay = max(float(getattr(self.http, "delay", 0) or 0), float(os.getenv("TSS_DELAY", "1.5")))
-        self._logged_in = False
-        self._login_tried = False
+        self._cat: Optional[dict] = None
         self.blocked_reason = ""
-        self._listing: Dict[str, Dict[str, str]] = {}
 
-    # ------------------------------------------------------------ login (1× na beh)
+    def _catalog(self) -> dict:
+        if self._cat is None:
+            import requests
+            tok = os.environ.get("HQ_SYNC_TOKEN", "")
+            r = requests.get(f"{HQ_URL}/api/sync/tss-catalog", timeout=120,
+                             headers={"Authorization": f"Bearer {tok}", "Accept-Encoding": "gzip", "User-Agent": "smartgaraz-bot"})
+            r.raise_for_status()
+            self._cat = r.json()
+            self._by_url = {u.split("#")[0]: it for u, it in (self._cat.get("items") or {}).items()}
+        return self._cat
+
     def ensure_login(self) -> bool:
-        if self._logged_in or self._login_tried:
-            return self._logged_in
-        self._login_tried = True
-        u, p = self.credentials.get("user"), self.credentials.get("password")
-        if not u or not p:
+        """Žiadny login z GitHubu — len overí, že HQ má čerstvý TSS katalóg."""
+        try:
+            return bool(self._catalog().get("items"))
+        except Exception as exc:
+            self.blocked_reason = f"HQ katalóg: {exc}"
             return False
-        page = self.http.get(BASE + "/prihlasenie").text or ""
-        if re.search(r"captcha|g-recaptcha|hcaptcha|cf-challenge", page, re.I):
-            self.blocked_reason = "captcha"
-            return False
-        m = re.search(r'name="_token" value="([^"]+)"', page)
-        data = {"user_login": u, "user_password": p, "rememberme": "0", "tss_login_form": "Prihlásiť",
-                "redirect": "", "_token": m.group(1) if m else ""}
-        r = self.http.session.post(BASE + "/prihlasenie", data=data, timeout=30)
-        t = r.text or ""
-        if re.search(r"captcha|overovac[ií] k[óo]d|dvojfaktor|2fa", t, re.I):
-            self.blocked_reason = "captcha/2FA"
-            return False
-        self._logged_in = "Neplatné meno alebo heslo" not in t and bool(re.search(r"odhl[áa]s", t, re.I))
-        return self._logged_in
-
-    # ------------------------------------------------------------ crawl
-    def _listing_page(self, path: str) -> Tuple[List[str], Optional[str]]:
-        h = self.http.get(urljoin(BASE, path)).text or ""
-        soup = BeautifulSoup(h, "html.parser")
-        box = soup.select_one("#fs_results_box") or soup
-        urls = []
-        for card in box.select(".flex-list-item"):
-            a = card.select_one(".product-name a")
-            if not a or not a.get("href"):
-                continue
-            url = urljoin(BASE, a["href"].split("?")[0])
-            av = card.select_one("[class*=product-availability]")
-            code = card.select_one('[title="Kód produktu"]')
-            img = card.select_one("[class*=tag-main-product-images-]")
-            pid = re.search(r"tag-main-product-images-(\d+)", " ".join(img.get("class", []))) if img else None
-            self._listing[url] = {"stock": av.get_text(" ", strip=True) if av else "",
-                                  "code": code.get_text(" ", strip=True) if code else "",
-                                  "pid": pid.group(1) if pid else ""}
-            urls.append(url)
-        nxt = soup.select_one(".fs_pager .fs-next a[href]")
-        return urls, (nxt["href"] if nxt else None)
 
     def discover_product_urls(self, limit: Optional[int] = None) -> List[str]:
-        self.ensure_login()
-        out: List[str] = []
-        seen = set()
-        for seed in SEEDS:
-            path: Optional[str] = f"{ROOT}{seed}?view=default"
-            pages = 0
-            while path and pages < 60:
-                pages += 1
-                urls, path = self._listing_page(path)
-                for u in urls:
-                    if u not in seen:
-                        seen.add(u)
-                        out.append(u)
-                if limit and len(out) >= limit:
-                    return out[:limit]
-        return out
+        urls = list((self._catalog().get("items") or {}).keys())
+        return urls[:limit] if limit else urls
 
     def iter_catalog(self, limit: Optional[int] = None) -> Iterator[ProductRaw]:
-        """Full import: už existujúce SKU/URL (HQ endpoint) preskoč ešte pred stiahnutím detailu."""
         if not self.ensure_login():
-            raise RuntimeError(f"TSS login zlyhal{' (' + self.blocked_reason + ')' if self.blocked_reason else ''} – koniec behu")
+            raise RuntimeError(f"TSS katalóg z HQ nie je k dispozícii ({self.blocked_reason})")
         skip_skus, skip_urls = set(), set()
         if os.getenv("SG_SKIP_EXISTING", "0") == "1":
             try:
@@ -181,100 +150,51 @@ class TssSupplier(BaseSupplier):
                 skip_skus, skip_urls, _src = existing()
             except Exception:
                 pass
+        # Najprv položky s jasnou kategóriou a skladom (rýchlo prvé publikovateľné produkty).
+        items = list((self._catalog().get("items") or {}).values())
+        items.sort(key=lambda it: (tss_category(it.get("cat", "")) is None, stock_of(it.get("stock", ""))[0] != "instock"))
         n = 0
-        for url in self.discover_product_urls(None):
-            lst = self._listing.get(url, {})
-            if url in skip_urls or sku_of(lst.get("code", ""), lst.get("pid", "")) in skip_skus:
+        for it in items:
+            if it["url"] in skip_urls or sku_of(it.get("code", ""), it.get("pid", "")) in skip_skus:
                 continue
-            p = self.parse_product(url)
+            p = self._to_raw(it)
             if p:
                 yield p
                 n += 1
                 if limit and n >= limit:
                     return
 
-    # ------------------------------------------------------------ detail
-    def _price(self, soup: BeautifulSoup, h: str) -> Tuple[Optional[float], Optional[float], str]:
-        """(bez DPH, s DPH, text) z bloku „Vaša cena bez DPH … s DPH …“ (dealer cena prihláseného
-        partnera). „Koncová cena“ (MOC) a košík sa ignorujú."""
-        for el in soup.select("p.product-price-wrapper"):
-            if "product-price-old" in " ".join(el.get("class", [])):
-                continue
-            t = el.get_text(" ", strip=True)
-            if not re.search(r"va[šs]a cena", t, re.I):
-                continue
-            strong = el.select_one(".product-price")
-            net = _money(strong.get_text(" ", strip=True)) if strong else None
-            m = re.search(r"s\s*DPH\s*([\d\s\u00a0.,]+)", t, re.I)
-            gross = _money(m.group(1)) if m else None
-            if gross is None and net is not None:
-                gross = round(net * 1.23, 2)
-            moc = None
-            for o in soup.select("p.product-price-old-secondary"):
-                mm = re.search(r"s\s*DPH\s*([\d\s\u00a0.,]+)", o.get_text(" ", strip=True), re.I)
-                moc = _money(mm.group(1)) if mm else None
-            self._last_moc = moc
-            return net, gross, t[:160]
-        self._last_moc = None
-        return None, None, ""
-
     def parse_product(self, url: str) -> Optional[ProductRaw]:
-        url = url.split("#", 1)[0]
-        h = self.http.get(url).text or ""
-        soup = BeautifulSoup(h, "html.parser")
-        h1 = soup.select_one("h1.product-title") or soup.find("h1")
-        name = re.sub(r"\s+", " ", h1.get_text(" ", strip=True)) if h1 else ""
-        if not name:
+        self._catalog()
+        it = self._by_url.get((url or "").split("#")[0])
+        return self._to_raw(it) if it else None
+
+    def _to_raw(self, it: dict) -> Optional[ProductRaw]:
+        name = re.sub(r"\s+", " ", it.get("name") or "").strip()
+        code = (it.get("code") or "").strip()
+        pl = (self._catalog().get("prices") or {}).get(code.upper()) or {}
+        net = it.get("price")
+        if net is None and pl.get("dealer") is not None:
+            net = pl["dealer"]
+        if not name or net is None or float(net) <= 0:
             return None
-        crumbs = [a.get("href") or "" for a in soup.select("ol.breadcrumb li a")]
-        crumb = crumbs[-1] if crumbs else ""
-        if ROOT.rstrip("/") not in crumb:
-            return None  # iná divízia (zabezpečenie objektov…)
-        ld: dict = {}
-        for s in soup.find_all("script", type="application/ld+json"):
-            try:
-                d = json.loads(s.string or "{}")
-                if d.get("@type") == "Product":
-                    ld = d
-                    break
-            except Exception:
-                continue
-        meta = soup.select_one("p.product-meta")
-        code = ""
-        if meta:
-            code = meta.get_text(" ", strip=True).split("|")[-1].strip()
-        lst = self._listing.get(url, {})
-        code = code or lst.get("code", "")
-        pid = lst.get("pid") or (re.search(r'"id":(\d+)', h).group(1) if re.search(r'"id":(\d+)', h) else "")
-        params = {}
-        for tr in soup.select("#parameters table tr"):
-            th, td = tr.find("th"), tr.find("td")
-            if th and td:
-                params[th.get_text(" ", strip=True)] = td.get_text(" ", strip=True)
-        brand = params.pop("Výrobca", "") or (meta.find("img").get("alt", "").title() if meta and meta.find("img") else "")
-        params.pop("Hmotnosť", None)
-        desc_el = soup.select_one("#description")
-        desc = desc_el.get_text(" ", strip=True)[:3000] if desc_el else _html.unescape(re.sub(r"<[^>]+>", " ", _html.unescape(ld.get("description", ""))))[:3000]
-        short = ""
-        if h1:
-            d = h1.find_next("div")
-            short = d.get_text(" ", strip=True)[:240] if d else ""
-        imgs = [urljoin(BASE, a.get("href")) for a in soup.select(".product-gallery-wrapper a[href]")
-                if re.search(r"\.(jpe?g|png|webp)$", a.get("href", ""), re.I)][:6]
-        stock_txt = lst.get("stock") or str((ld.get("offers") or {}).get("availability", ""))
-        st, dt = stock_of(stock_txt)
-        net, gross, ptxt = self._price(soup, h) if self._logged_in else (None, None, "")
-        if gross is None:
-            return None  # bez dealer ceny nič neimportujeme
-        cat = tss_category(crumb)
-        weight = re.search(r"Hmotnosť</th>\s*<td>([\d.,]+)\s*kg", h)
+        net = float(net)
+        gross = round(net * 1.23, 2)
+        moc = pl.get("moc")
+        desc = (pl.get("desc") or "").strip()
+        st, dt = stock_of(it.get("stock", ""))
+        cat = tss_category(it.get("cat", ""))
+        first = re.split(r"[\s-]", name, maxsplit=1)[0].lower()
+        brand = BRANDS.get(first, "")
+        img = full_image(it.get("img") or "")
         return ProductRaw(
-            name=name, source="tss", supplier_url=url, sku=sku_of(code, pid), brand=brand,
-            description=desc, short_description=short or desc[:240], cost_price=f"{gross:.2f}",
-            stock_status=st, delivery_text=dt, attributes=params, existing_images=imgs,
-            raw_extra={"_sg_supplier": "tss", "_sg_supplier_art_no": code, "tss_id": pid, "catalog_url": crumb,
-                       "price_basis": f"TSS dealer {net} € bez DPH / {gross} € s DPH ({ptxt[:120]})",
-                       "unit_cost": gross, "stock_text": stock_txt, "tss_moc_s_dph": getattr(self, "_last_moc", None), "sg_category_path": cat or [],
-                       "weight_kg": weight.group(1).replace(",", ".") if weight else "",
-                       "media_source": "tssgroup.sk", "media_allowed": "pending"},
+            name=name, source="tss", supplier_url=it["url"], sku=sku_of(code, it.get("pid", "")), brand=brand,
+            description=desc or name, short_description=(desc[:240] if desc else name), cost_price=f"{gross:.2f}",
+            stock_status=st, delivery_text=dt, attributes={"Kód výrobcu": code} if code else {},
+            existing_images=[img] if img else [],
+            raw_extra={"_sg_supplier": "tss", "_sg_supplier_art_no": code, "tss_id": it.get("pid", ""), "catalog_url": it.get("cat", ""),
+                       "price_basis": f"TSS dealer {net:.2f} € bez DPH / {gross:.2f} € s DPH" + (f" (MOC {moc} € bez DPH)" if moc else ""),
+                       "unit_cost": gross, "stock_text": it.get("stock", ""), "sg_category_path": cat or [],
+                       "tss_moc_bez_dph": moc, "media_source": "tssgroup.sk", "media_allowed": "pending",
+                       "tss_catalog_at": self._catalog().get("generated_at", "")},
         )
