@@ -15,6 +15,7 @@ jobs:
     timeout-minutes: 300
     strategy:
       fail-fast: false
+      max-parallel: 1  # shop rýchlosť má prednosť
       matrix:
         shard: [0, 1, 2, 3, 4, 5]
     steps:
