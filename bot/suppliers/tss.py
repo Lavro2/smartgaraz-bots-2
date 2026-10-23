@@ -7,8 +7,8 @@ Zdroj dát: HQ (hq.smartgaraz.sk/api/sync/tss-catalog). TSS (Cloudflare) blokuje
 preto cenníky (XLSX z Moje TSS) + sklad a dealer ceny z kategórií sťahuje hosting (HQ lib/tss.php,
 1 login na beh, ≥1,6 s medzi požiadavkami). Tento bot na tssgroup.sk nepristupuje vôbec. Náklad = cena s DPH (nie sme platcovia), predaj = +30 %, nahor na ,90
 (pricing.calculate_retail_ideo — rovnaké pravidlo). Bez ceny → produkt sa neimportuje.
-Sklad: „Skladom“ → SR 2–3 prac. dni; „Na ceste“/„Na objednávku“ → EÚ 5–10 (onbackorder);
-„Vypredané“/„Nedostupné“ → nedá sa objednať. Kategórie: len explicitná mapa podľa
+Sklad: „Skladom“ → SR 2–3 prac. dni; „Na ceste“ (alebo text s lehotou) → EÚ 5–10 (onbackorder);
+„Na objednávku“ bez lehoty / „Nie je skladom“ / „Vypredané“ → Nedostupné, nedá sa objednať. Kategórie: len explicitná mapa podľa
 drobčekovej navigácie TSS, inak bez kategórie (koncept). Tempo ≥1,5 s, jeden login na beh,
 žiadne obchádzanie ochrán (captcha/2FA → koniec).
 """
@@ -76,10 +76,13 @@ def tss_category(crumb_path: str) -> Optional[List[str]]:
 
 
 def stock_of(text: str) -> Tuple[str, str]:
+    """Legenda webu má 3 stavy: Skladom v SR / Sklad v EÚ (5–10 dní) / Nedostupné.
+    „Na ceste“ alebo text s dodacou lehotou → objednateľné (EÚ 5–10 dní);
+    „Na objednávku“ bez lehoty, „Nie je skladom“ → nedostupné (termín nevieme sľúbiť)."""
     t = (text or "").strip().lower()
     if t.startswith("skladom") or "instock" in t:
         return "instock", "2–3 pracovné dni"
-    if any(k in t for k in ("na ceste", "objedn", "do ", "preorder", "backorder", "dní", "týž")):
+    if "na ceste" in t or re.search(r"\d+\s*(?:-|–)?\s*\d*\s*(?:h\b|hod|dn|dní|dni|týž|tyž|tyz)", t):
         return "onbackorder", "5–10 pracovných dní"
     return "outofstock", "nedostupné"
 
