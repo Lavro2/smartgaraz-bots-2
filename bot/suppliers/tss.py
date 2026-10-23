@@ -195,33 +195,28 @@ class TssSupplier(BaseSupplier):
 
     # ------------------------------------------------------------ detail
     def _price(self, soup: BeautifulSoup, h: str) -> Tuple[Optional[float], Optional[float], str]:
-        """(bez DPH, s DPH, text). Len z cenového bloku prihláseného partnera."""
-        net = gross = None
-        txt = ""
-        for el in soup.select("[class*=price], [id*=price]"):
-            if "button-show-price" in " ".join(el.get("class", [])) or el.get("id") == "modal-show-price":
+        """(bez DPH, s DPH, text) z bloku „Vaša cena bez DPH … s DPH …“ (dealer cena prihláseného
+        partnera). „Koncová cena“ (MOC) a košík sa ignorujú."""
+        for el in soup.select("p.product-price-wrapper"):
+            if "product-price-old" in " ".join(el.get("class", [])):
                 continue
             t = el.get_text(" ", strip=True)
-            if "€" not in t and "EUR" not in t:
+            if not re.search(r"va[šs]a cena", t, re.I):
                 continue
-            txt = (txt + " | " + t)[:300]
-            for m in re.finditer(r"([\d\s\u00a0.,]+)\s*(?:€|EUR)[^\d]{0,25}?(bez\s*DPH|s\s*DPH)?", t, re.I):
-                v = _money(m.group(1))
-                lab = (m.group(2) or "").lower()
-                if v is None:
-                    continue
-                if "bez" in lab and net is None:
-                    net = v
-                elif lab.startswith("s") and gross is None:
-                    gross = v
-            if net is None and gross is None:
-                m = re.search(r"bez\s*DPH[^\d]{0,20}([\d\s\u00a0.,]+)", t, re.I)
-                net = _money(m.group(1)) if m else None
-                m = re.search(r"s\s*DPH[^\d]{0,20}([\d\s\u00a0.,]+)", t, re.I)
-                gross = _money(m.group(1)) if m else None
-        if gross is None and net is not None:
-            gross = round(net * 1.23, 2)
-        return net, gross, txt
+            strong = el.select_one(".product-price")
+            net = _money(strong.get_text(" ", strip=True)) if strong else None
+            m = re.search(r"s\s*DPH\s*([\d\s\u00a0.,]+)", t, re.I)
+            gross = _money(m.group(1)) if m else None
+            if gross is None and net is not None:
+                gross = round(net * 1.23, 2)
+            moc = None
+            for o in soup.select("p.product-price-old-secondary"):
+                mm = re.search(r"s\s*DPH\s*([\d\s\u00a0.,]+)", o.get_text(" ", strip=True), re.I)
+                moc = _money(mm.group(1)) if mm else None
+            self._last_moc = moc
+            return net, gross, t[:160]
+        self._last_moc = None
+        return None, None, ""
 
     def parse_product(self, url: str) -> Optional[ProductRaw]:
         url = url.split("#", 1)[0]
@@ -279,7 +274,7 @@ class TssSupplier(BaseSupplier):
             stock_status=st, delivery_text=dt, attributes=params, existing_images=imgs,
             raw_extra={"_sg_supplier": "tss", "_sg_supplier_art_no": code, "tss_id": pid, "catalog_url": crumb,
                        "price_basis": f"TSS dealer {net} € bez DPH / {gross} € s DPH ({ptxt[:120]})",
-                       "unit_cost": gross, "stock_text": stock_txt, "sg_category_path": cat or [],
+                       "unit_cost": gross, "stock_text": stock_txt, "tss_moc_s_dph": getattr(self, "_last_moc", None), "sg_category_path": cat or [],
                        "weight_kg": weight.group(1).replace(",", ".") if weight else "",
                        "media_source": "tssgroup.sk", "media_allowed": "pending"},
         )
