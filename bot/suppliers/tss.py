@@ -153,8 +153,13 @@ class TssSupplier(BaseSupplier):
         # Najprv položky s jasnou kategóriou a skladom (rýchlo prvé publikovateľné produkty).
         items = list((self._catalog().get("items") or {}).values())
         items.sort(key=lambda it: (tss_category(it.get("cat", "")) is None, stock_of(it.get("stock", ""))[0] != "instock"))
+        shard = os.getenv("TSS_SHARD", "").strip()   # "k/N" → paralelné joby bez prekryvu
+        k, nsh = (int(shard.split("/")[0]), int(shard.split("/")[1])) if "/" in shard else (0, 1)
+        import zlib
         n = 0
         for it in items:
+            if nsh > 1 and zlib.crc32(sku_of(it.get("code", ""), it.get("pid", "")).encode()) % nsh != k:
+                continue
             if it["url"] in skip_urls or sku_of(it.get("code", ""), it.get("pid", "")) in skip_skus:
                 continue
             p = self._to_raw(it)
