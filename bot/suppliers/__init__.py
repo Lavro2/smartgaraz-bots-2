@@ -26,6 +26,7 @@ from .efautoparts import EfautopartsSupplier
 from .linkentry import LinkentrySupplier
 from .jlm import JlmSupplier
 from .ideo import IdeoSupplier
+from .tss import TssSupplier
 
 
 def _creds(prefix: str) -> Dict[str, str]:
@@ -58,7 +59,7 @@ def _creds(prefix: str) -> Dict[str, str]:
     return out
 
 
-_HQ_SLUG = {"LKQ": "lkq", "SZEKOP": "szekop", "WURTH": "wurth", "PROTEC": "pro-tec", "METABOND": "metabond", "IDEO": "ideo"}
+_HQ_SLUG = {"LKQ": "lkq", "SZEKOP": "szekop", "WURTH": "wurth", "PROTEC": "pro-tec", "METABOND": "metabond", "IDEO": "ideo", "TSS": "tss"}
 
 
 def get_supplier(name: str, base_url: Optional[str] = None, category_url: Optional[str] = None) -> BaseSupplier:
@@ -118,6 +119,8 @@ def get_supplier(name: str, base_url: Optional[str] = None, category_url: Option
         return LinkentrySupplier(http=http_slow, credentials=creds)
     if key in ("ideo", "ideo.sk"):
         return IdeoSupplier(http=http, credentials=_creds("IDEO"))
+    if key in ("tss", "tssgroup", "tssgroup.sk", "tss-group"):
+        return TssSupplier(http=http, credentials=_creds("TSS"))
     if key in ("generic", "any", "custom") or base_url:
         return GenericSupplier(
             base_url=base_url or os.getenv("GENERIC_BASE_URL", ""),
@@ -141,5 +144,6 @@ AVAILABLE_SUPPLIERS = (
     "efautoparts",
     "linkentry",
     "ideo",
+    "tss",
     "generic",
 )

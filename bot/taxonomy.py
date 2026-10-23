@@ -49,6 +49,15 @@ CATEGORY_TREE: Dict[str, List[str]] = {
         "Disky & pneumatiky",
         "Leštenie & vosky", "Detailingové náradie", "Mikrovlákno & utierky", "Chémia pre fólie & PPF",
     ],
+    # TSS Group (KEETEC, Pandora, parkovacie systémy, autokamery…)
+    "Autoelektronika & príslušenstvo": [
+        "Autoalarmy & zabezpečenie", "Parkovacie senzory", "Parkovacie kamery", "Asistenčné systémy",
+        "Autokamery", "Audio & multimédiá", "Osvetlenie & výstražné svetlá", "Nabíjanie & napájanie",
+        "Komfort & doplnky", "Inštalačný materiál",
+    ],
+    "Autofólie & PPF": [
+        "Autofólie na okná", "PPF fólie",
+    ],
     "Dielenská chémia & Údržba": [
         "Čističe bŕzd & Odmasťovače",
         "Mazivá & Pasty",
@@ -1471,7 +1480,7 @@ def match_keyword_category(raw_data: dict) -> Optional[List[str]]:
 
     # Dodávateľ dal explicitnú cestu (ideo mapa) → použij ju; prázdna = bez kategórie.
     _ex = raw_data.get("raw_extra") if isinstance(raw_data.get("raw_extra"), dict) else {}
-    if str(raw_data.get("source") or "").lower() == "ideo":
+    if str(raw_data.get("source") or "").lower() in ("ideo", "tss"):
         _p = _ex.get("sg_category_path") or []
         return sanitize_category_path(_p) if _p else None
 

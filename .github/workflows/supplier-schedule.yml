@@ -1,10 +1,11 @@
-name: Supplier schedule (ideo + Pro-Tec)
+name: Supplier schedule (ideo + Pro-Tec + TSS)
 # Repo B vlastní ideo a Pro-Tec. Noc: full import (len koncepty, skip existujúce SKU).
 # Deň: ceny + sklad existujúcich produktov. HQ load guard (shop_guard) platí.
 on:
   schedule:
     - cron: "30 0 * * *"        # 02:30 SK (leto) — full
     - cron: "15 6,10,14 * * 1-6" # 08:15 / 12:15 / 16:15 SK — ceny + sklad
+    - cron: "45 1 * * *"        # 03:45 SK — TSS full (koncepty)
   workflow_dispatch:
     inputs:
       mode:
@@ -14,6 +15,7 @@ on:
 
 jobs:
   run:
+    if: github.event.schedule != '45 1 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     concurrency:
@@ -43,3 +45,33 @@ jobs:
           SG_IMPORT_BUDGET_S: "12600"
           MODE: ${{ github.event.inputs.mode || (github.event.schedule == '30 0 * * *' && 'full' || 'prices') }}
         run: python bot/supplier_import.py --supplier "${{ matrix.supplier }}" --mode "$MODE" --limit 0
+
+  # TSS Group (tssgroup.sk) — zapnuté až keď repo variable TSS_ENABLED = 1.
+  # Noc 03:45 SK full (len koncepty, bez auto-publish), deň ceny + sklad ako ideo.
+  tss:
+    if: vars.TSS_ENABLED == '1' && github.event.schedule != '30 0 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    concurrency:
+      group: supplier-import-tss
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: bot/requirements.txt
+      - run: pip install -r bot/requirements.txt
+      - name: Import
+        env:
+          WC_URL: ${{ secrets.WC_URL }}
+          WC_CONSUMER_KEY: ${{ secrets.WC_CONSUMER_KEY }}
+          WC_CONSUMER_SECRET: ${{ secrets.WC_CONSUMER_SECRET }}
+          HQ_SYNC_TOKEN: ${{ secrets.HQ_SYNC_TOKEN }}
+          TSS_USER: ${{ secrets.TSS_USER }}
+          TSS_PASSWORD: ${{ secrets.TSS_PASSWORD }}
+          IMPORT_IN_STOCK: "1"
+          SG_IMPORT_BUDGET_S: "12600"
+          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '45 1 * * *' && 'full' || 'prices') }}
+        run: python bot/supplier_import.py --supplier tss --mode "$MODE" --limit 0

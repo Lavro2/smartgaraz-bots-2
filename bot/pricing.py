@@ -290,7 +290,7 @@ def calculate_retail(
 ) -> PricingResult:
     if supplier and is_mopar_source(source=supplier, brand=brand, name=name):
         return calculate_retail_mopar(cost)
-    if supplier and re.search(r"\bideo\b", str(supplier).lower()):
+    if supplier and re.search(r"\b(ideo|tss)\b", str(supplier).lower()):
         return calculate_retail_ideo(cost)
     margin = margin_percent if margin_percent is not None else _f("MARGIN_PERCENT", 35.0)
     shipping = shipping_flat if shipping_flat is not None else _f("SHIPPING_FLAT", 0.60)

@@ -28,9 +28,10 @@ SUPPLIERS = {
     "metabond": ("metabond", "metabond", False),
     "ptak-mopar": ("generic", "", False),
     "ideo": ("ideo", "ideo.sk", True),
+    "tss": ("tss", "tssgroup.sk", True),
 }
 ENV_PREFIX = {"lkq": "LKQ", "wurth": "WURTH", "szekop": "SZEKOP", "pro-tec": "PROTEC",
-              "jlm": "JLM", "metabond": "METABOND", "ptak-mopar": "GENERIC", "ideo": "IDEO"}
+              "jlm": "JLM", "metabond": "METABOND", "ptak-mopar": "GENERIC", "ideo": "IDEO", "tss": "TSS"}
 BUDGET_S = int(os.environ.get("SG_IMPORT_BUDGET_S", str(int(4.5 * 3600))))
 
 
@@ -200,7 +201,11 @@ def new_ids(max_id_before: int) -> list:
     return ids
 
 
-KNOWN_SOURCES = {"lkq", "wurth", "szekop", "pro-tec", "jlm", "metabond", "ideo"}
+KNOWN_SOURCES = {"lkq", "wurth", "szekop", "pro-tec", "jlm", "metabond", "ideo", "tss"}
+# Len koncepty — bez auto-publish (Samuel schvaľuje ručne v HQ).
+NO_PUBLISH = {"tss"}
+# Presne 1 login na beh: kontrolný login robí až samotný krok (TSS), nie aj tento wrapper.
+SINGLE_LOGIN = {"tss"}
 
 
 def new_by_source(max_id_before: int) -> dict:
@@ -282,7 +287,7 @@ def main() -> int:
 
     # Lockout guard: presne JEDEN kontrolný pokus o login; pri zlyhaní koniec.
     login_used = False
-    if user and pwd and code != "generic":
+    if user and pwd and code != "generic" and slug not in SINGLE_LOGIN:
         from suppliers import get_supplier
         sup = get_supplier(code)
         if getattr(sup, "_public_only", False):
@@ -376,7 +381,7 @@ def main() -> int:
                 break
 
     pub = {}
-    if a.mode == "full" and not (slug == "lkq" and os.path.exists("/tmp/sg_lkq_login_failed")):
+    if a.mode == "full" and slug not in NO_PUBLISH and not (slug == "lkq" and os.path.exists("/tmp/sg_lkq_login_failed")):
         src = {"pro-tec": "pro-tec", "ptak-mopar": "generic"}.get(slug, slug)
         _, pout = run([py, str(ROOT / "publish_ready_drafts.py"), "--limit", "0", "--supplier", src, "--sleep", "0.1",
                        "--min-id", str(max_id_before + 1)], env)

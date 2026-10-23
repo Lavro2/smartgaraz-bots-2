@@ -138,6 +138,13 @@ def classify_raw(raw: Dict[str, Any]) -> Optional[Dict[str, str]]:
         if st == "onbackorder":
             return _result("eu", "ideo: na objednávku")
         return _result("na", "ideo: nedostupné")
+    if src == "tss":
+        st = str(raw.get("stock_status") or "")
+        if st == "instock":
+            return _result("sr", "TSS Group SK: skladom (2–3 prac. dni)")
+        if st == "onbackorder":
+            return _result("eu", "TSS Group: na ceste / na objednávku")
+        return _result("na", "TSS Group: nedostupné")
     if src in ("wurth", "würth"):
         return classify_wurth(str(extra.get("origin") or ""), str(raw.get("stock_status") or "instock"))
     return None

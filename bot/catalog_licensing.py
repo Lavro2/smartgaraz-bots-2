@@ -61,6 +61,7 @@ ALLOWED_SUPPLIER_HOST_SUFFIXES: tuple[str, ...] = (
     "myshoptet.com",  # Shoptet CDN (JLM / iné Shoptet B2B feedy + fotky)
     "efautoparts.sk",
     "emilfrey.sk",
+    "tssgroup.sk",  # TSS Group dealer e-shop (KEETEC, fólie, autoelektronika)
     "smartgaraz.sk",
 )
 
