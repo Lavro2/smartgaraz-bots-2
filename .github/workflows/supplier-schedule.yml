@@ -13,6 +13,12 @@ on:
         required: false
         default: "prices"
 
+env:
+  # Public repo: logs are world-readable → redact purchase prices, margins,
+  # supplier URLs and search terms in every Python process (bot/log_redact.py).
+  SG_PUBLIC_LOGS: "1"
+  PYTHONPATH: ${{ github.workspace }}/bot/public_ci
+
 jobs:
   run:
     if: github.event.schedule != '45 1 * * *'

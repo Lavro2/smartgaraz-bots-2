@@ -246,9 +246,13 @@ def own_new(by_src: dict, code: str) -> int:
 
 
 def wurth_blocked_result(**kw) -> int:
-    return result(False, "Würth blokuje automatický prístup (ochrana webu challenge/403) – "
+    # Blokácia Würthu nie je chyba bota (neobchádzame ju) – shard skončí ako „preskočený“
+    # s varovaním, nie ako zlyhaný beh. Würth katalóg rieši týždenný wurth-catalog-sync.
+    print("::warning::Würth blokuje automatický prístup – shard preskočený (bez obchádzania).", flush=True)
+    result(False, "Würth blokuje automatický prístup (ochrana webu challenge/403) – "
                          "shard som hneď ukončil, nič sa neimportovalo. Neobchádzame to; skúsi sa ďalší beh.",
                   blocked=True, **kw)
+    return 0
 
 
 def main() -> int:
@@ -426,6 +430,11 @@ def main() -> int:
         why = (bad[-1] if bad else (out.strip().splitlines() or ["neznáma chyba"])[-1])[-250:]
         if rc == 124:
             why = "vypršal čas behu (časť sa stihla)"
+            if a.mode == "prices":
+                # Ceny/sklad sú best-effort 3× denne; pri dennom brzdení (shop_guard) beh často
+                # nestihne všetko – to nie je chyba, ďalší beh pokračuje. Varovanie, nie zlyhanie.
+                print("::warning::Aktualizácia cien nestihla všetko v časovom limite (shop_guard brzdí kvôli rýchlosti webu) – pokračuje ďalší beh.", flush=True)
+                return result(True, f"Čiastočne hotovo ({slug}, ceny): {why}", partial=True, **counts)
         return result(False, f"Import skončil chybou: {why}", **counts)
     return result(True, f"Hotovo ({slug}): {counts['new'] or 0} nových produktov" + (f", zverejnených {pub['published']}, na kontrolu {pub['held']}." if pub else "."), **counts)
 

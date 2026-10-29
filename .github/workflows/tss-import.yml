@@ -8,6 +8,12 @@ on:
         description: "import | publish"
         required: false
         default: "import"
+env:
+  # Public repo: logs are world-readable → redact purchase prices, margins,
+  # supplier URLs and search terms in every Python process (bot/log_redact.py).
+  SG_PUBLIC_LOGS: "1"
+  PYTHONPATH: ${{ github.workspace }}/bot/public_ci
+
 jobs:
   import:
     if: github.event.inputs.mode != 'publish'
