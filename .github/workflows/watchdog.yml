@@ -32,5 +32,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           HQ_SYNC_TOKEN: ${{ secrets.HQ_SYNC_TOKEN }}
           SG_PEER_REPO: lavrinciksamuel-cyber/smartgaraz-bots
+          SG_CHECK_TSS: "1"
           SG_WATCHDOG_DRY: ${{ inputs.dry && '1' || '0' }}
         run: python3 bot/watchdog.py
