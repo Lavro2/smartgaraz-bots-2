@@ -65,13 +65,25 @@ RULES: Tuple[Tuple[str, Optional[List[str]]], ...] = (
 )
 
 
-def tss_category(crumb_path: str) -> Optional[List[str]]:
+# Nová TSS sekcia „kamery-a-monitory“ (2026-10) nemá podsekcie → kategória podľa názvu.
+NAME_RULES: Tuple[Tuple[str, str, List[str]], ...] = (
+    (r"^kamery-a-monitory", r"(?i)k[aá]bel|cable|redukci|filter|dr[žz]iak|holder|kon[eé]ktor", [AE, "Inštalačný materiál"]),
+    (r"^kamery-a-monitory", r"(?i)monitor|tft|dvr|displej|zrkadl", [AE, "Audio & multimédiá"]),
+    (r"^kamery-a-monitory", r"(?i)autokamer|dashcam|z[aá]znamov", [AE, "Autokamery"]),
+    (r"^kamery-a-monitory", r"(?i)kamer|camera|\bcam", [AE, "Parkovacie kamery"]),
+)
+
+
+def tss_category(crumb_path: str, name: str = "") -> Optional[List[str]]:
     p = (crumb_path or "").split(ROOT, 1)[-1].strip("/")
     if not p:
         return None
     for pat, cat in RULES:
         if re.search(pat, p):
             return list(cat) if cat else None
+    for pat, npat, cat in NAME_RULES:
+        if re.search(pat, p) and re.search(npat, name or ""):
+            return list(cat)
     return None
 
 
@@ -155,7 +167,7 @@ class TssSupplier(BaseSupplier):
                 pass
         # Najprv položky s jasnou kategóriou a skladom (rýchlo prvé publikovateľné produkty).
         items = list((self._catalog().get("items") or {}).values())
-        items.sort(key=lambda it: (tss_category(it.get("cat", "")) is None, stock_of(it.get("stock", ""))[0] != "instock"))
+        items.sort(key=lambda it: (tss_category(it.get("cat", ""), it.get("name", "")) is None, stock_of(it.get("stock", ""))[0] != "instock"))
         shard = os.getenv("TSS_SHARD", "").strip()   # "k/N" → paralelné joby bez prekryvu
         k, nsh = (int(shard.split("/")[0]), int(shard.split("/")[1])) if "/" in shard else (0, 1)
         import zlib
@@ -191,7 +203,7 @@ class TssSupplier(BaseSupplier):
         moc = pl.get("moc")
         desc = (pl.get("desc") or "").strip()
         st, dt = stock_of(it.get("stock", ""))
-        cat = tss_category(it.get("cat", ""))
+        cat = tss_category(it.get("cat", ""), name)
         first = re.split(r"[\s-]", name, maxsplit=1)[0].lower()
         brand = BRANDS.get(first, "")
         img = full_image(it.get("img") or "")
