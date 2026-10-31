@@ -39,6 +39,12 @@ jobs:
           cache: pip
           cache-dependency-path: bot/requirements.txt
       - run: pip install -r bot/requirements.txt
+      - name: Restore price cursor
+        uses: actions/cache/restore@v4
+        with:
+          path: .sg_state
+          key: sg-state-${{ github.workflow }}-${{ github.job }}-${{ matrix.supplier || 'one' }}-${{ github.run_id }}
+          restore-keys: sg-state-${{ github.workflow }}-${{ github.job }}-${{ matrix.supplier || 'one' }}-
       - name: Import
         env:
           WC_URL: ${{ secrets.WC_URL }}
@@ -52,6 +58,12 @@ jobs:
           MODE: ${{ github.event.inputs.mode || (github.event.schedule == '30 0 * * *' && 'full' || 'prices') }}
         run: python bot/supplier_import.py --supplier "${{ matrix.supplier }}" --mode "$MODE" --limit 0
 
+      - name: Save price cursor
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .sg_state
+          key: sg-state-${{ github.workflow }}-${{ github.job }}-${{ matrix.supplier || 'one' }}-${{ github.run_id }}
   # TSS Group (tssgroup.sk) — zapnuté až keď repo variable TSS_ENABLED = 1.
   # Noc 03:45 SK full (len koncepty, bez auto-publish), deň ceny + sklad ako ideo.
   tss:
@@ -69,6 +81,12 @@ jobs:
           cache: pip
           cache-dependency-path: bot/requirements.txt
       - run: pip install -r bot/requirements.txt
+      - name: Restore price cursor
+        uses: actions/cache/restore@v4
+        with:
+          path: .sg_state
+          key: sg-state-${{ github.workflow }}-${{ github.job }}-${{ matrix.supplier || 'one' }}-${{ github.run_id }}
+          restore-keys: sg-state-${{ github.workflow }}-${{ github.job }}-${{ matrix.supplier || 'one' }}-
       - name: Import
         env:
           WC_URL: ${{ secrets.WC_URL }}
@@ -81,3 +99,9 @@ jobs:
           SG_IMPORT_BUDGET_S: "12600"
           MODE: ${{ github.event.inputs.mode || (github.event.schedule == '45 1 * * *' && 'full' || 'prices') }}
         run: python bot/supplier_import.py --supplier tss --mode "$MODE" --limit 0
+      - name: Save price cursor
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .sg_state
+          key: sg-state-${{ github.workflow }}-${{ github.job }}-${{ matrix.supplier || 'one' }}-${{ github.run_id }}

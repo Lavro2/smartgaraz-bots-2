@@ -1,0 +1,3 @@
+2026-10-31 09:29:54,227 | INFO    | ⚙️  Cenotvorba: marža=35% doprava=0.60€ ending=.0.90
+2026-10-31 09:29:54,930 | INFO    | ⚡ tss: 991 SKU z HQ, štart za kurzorom „-“ (pozícia 0)
+2026-10-31 09:30:00,959 | INFO    | 🎉 Hotovo: {'updated': 0, 'unchanged': 80, 'skipped': 0, 'failed': 0, 'total': 991, 'done': 80, 'minutes': 0.1}
