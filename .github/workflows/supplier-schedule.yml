@@ -95,7 +95,7 @@ jobs:
           HQ_SYNC_TOKEN: ${{ secrets.HQ_SYNC_TOKEN }}
           TSS_USER: ${{ secrets.TSS_USER }}
           TSS_PASSWORD: ${{ secrets.TSS_PASSWORD }}
-          IMPORT_IN_STOCK: "1"
+          IMPORT_IN_STOCK: "0"   # celý TSS katalóg (aj „Na ceste“ / nedostupné), Samuel 31.10
           SG_IMPORT_BUDGET_S: "12600"
           MODE: ${{ github.event.inputs.mode || (github.event.schedule == '45 1 * * *' && 'full' || 'prices') }}
         run: python bot/supplier_import.py --supplier tss --mode "$MODE" --limit 0
